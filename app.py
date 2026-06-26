@@ -5,15 +5,20 @@ import cv2
 import numpy as np
 from datetime import date
 
-st.set_page_config(page_title="Sistema de Asistencia Local IESTP", layout="wide")
+# Configuración de la página
+st.set_page_config(page_title="Sistema de Asistencia Central IESTP", layout="wide")
 
-# Base de datos global compartida en el servidor local de la laptop
+# =====================================================================
+# 🌐 BASE DE DATOS CENTRALIZADA EN EL SERVIDOR (MULTIDISPOSITIVO)
+# =====================================================================
+# Esto permite que los alumnos se registren en sus celulares y el docente los vea en el suyo
 @st.cache_resource
-def inicializar_db():
+def inicializar_db_central():
     return {"alumnos": {}, "docentes": {}, "asistencias": []}
 
-db_global = inicializar_db()
+db_global = inicializar_db_central()
 
+# --- FUNCIÓN PARA GENERAR QR ---
 def generar_qr(datos):
     qr = qrcode.QRCode(version=1, box_size=10, border=2)
     qr.add_data(datos)
@@ -23,6 +28,9 @@ def generar_qr(datos):
     img.save(buf, format="PNG")
     return buf.getvalue()
 
+# =====================================================================
+# 🚪 MENÚ LATERAL INTERACTIVO
+# =====================================================================
 st.sidebar.title("🚪 Menú de Asistencia")
 opcion = st.sidebar.radio("Selecciona una opción:", [
     "🆕 Crear mi Usuario (Alumnos)", 
@@ -31,8 +39,15 @@ opcion = st.sidebar.radio("Selecciona una opción:", [
     "🔑 Panel Creador (Solo Dani)"
 ])
 
+st.sidebar.markdown("---")
+
+# =====================================================================
+# VISTA 1: CREAR USUARIO (Alumnos)
+# =====================================================================
 if opcion == "🆕 Crear mi Usuario (Alumnos)":
     st.title("🆕 Registro de Alumnos")
+    st.write("Completa tus datos para registrarte en el sistema unificado:")
+    
     with st.form("form_registro", clear_on_submit=True):
         nuevo_dni = st.text_input("Número de DNI o Código")
         nuevo_nom = st.text_input("Nombre Completo").upper()
@@ -44,27 +59,37 @@ if opcion == "🆕 Crear mi Usuario (Alumnos)":
             if nuevo_dni and nuevo_nom:
                 db_global["alumnos"][nuevo_dni] = {"nombre": nuevo_nom, "carrera": nueva_carr, "ciclo": nuevo_ciclo, "turno": nuevo_turno}
                 st.success(f"¡Registrado con éxito!")
-                st.subheader("⬇️ Tu Código QR:")
+                st.subheader("⬇ nudge Tu Código QR:")
                 st.image(generar_qr(nuevo_dni), width=180)
+                st.info("💡 Tómale captura a este QR para mostrárselo al docente.")
 
+# =====================================================================
+# VISTA 2: ESCANEAR QR (Optimizado para la Cámara Trasera del Celular del Docente)
+# =====================================================================
 elif opcion == "📸 Escanear QR (Docentes)":
-    st.title("📸 Escáner de Asistencia Local")
-    fecha_str = str(st.date_input("Fecha:", date.today()))
+    st.title("📸 Escáner de Asistencia (Móvil)")
+    st.write("Presiona el botón de abajo para activar la cámara trasera de tu celular y capturar el QR.")
+    
+    fecha_str = str(st.date_input("Fecha de Registro:", date.today()))
     
     if db_global["docentes"]:
         lista_docentes = {v["nombre"]: k for k, v in db_global["docentes"].items()}
-        doc_sel = st.selectbox("Docente:", list(lista_docentes.keys()))
+        doc_sel = st.selectbox("Docente en aula:", list(lista_docentes.keys()))
         curso_actual = db_global["docentes"][lista_docentes[doc_sel]]["curso"]
     else:
+        st.warning("⚠️ No hay docentes registrados. La asistencia se guardará como 'General'.")
         curso_actual = "General"
         
-    estado_asistencia = st.selectbox("Estado:", ["Asistió", "Tardanza", "Faltó"])
+    estado_asistencia = st.selectbox("Estado a asignar:", ["Asistió", "Tardanza", "Faltó"])
     
-    # Cámara integrada de la laptop
-    foto_camara = st.camera_input("Apunta el QR a la cámara de la laptop")
+    st.markdown("---")
+    st.subheader("📷 Capturar Código QR:")
+    
+    # TRUCO MAESTRO: En celulares, 'file_uploader' te da la opción de abrir la CÁMARA TRASERA directamente.
+    foto_camara = st.file_uploader("Presiona aquí para abrir tu cámara trasera", type=["png", "jpg", "jpeg"])
     
     if foto_camara is not None:
-        bytes_data = foto_camara.getvalue()
+        bytes_data = foto_camara.read()
         cv2_img = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
         detector = cv2.QRCodeDetector()
         dni_detectado, _, _ = detector.detectAndDecode(cv2_img)
@@ -75,15 +100,20 @@ elif opcion == "📸 Escanear QR (Docentes)":
                 ya_reg = any(a["dni"] == dni_detectado and a["fecha"] == fecha_str for a in db_global["asistencias"])
                 
                 if not ya_reg:
-                    db_global["asistencias"].append({"fecha": fecha_str, "dni": dni_detectado, "nombre": nombre_alumno, "curso": curso_actual, "estado": estado_asistencia})
-                    st.success(f"✔️ Asistencia registrada para {nombre_alumno}.")
+                    db_global["asistencias"].append({
+                        "fecha": fecha_str, "dni": dni_detectado, "nombre": nombre_alumno, "curso": curso_actual, "estado": estado_asistencia
+                    })
+                    st.success(f"🎉 ¡Escaneo Exitoso! ✔️ {nombre_alumno} registrado.")
                 else:
-                    st.warning("El alumno ya tiene asistencia hoy.")
+                    st.warning(f"⚠️ El alumno {nombre_alumno} ya tiene asistencia hoy.")
             else:
-                st.error(f"DNI {dni_detectado} no registrado en el sistema local.")
+                st.error(f"❌ El código QR ({dni_detectado}) no pertenece a ningún alumno registrado.")
         else:
-            st.error("No se detectó el QR, intenta acomodar el celular más cerca o con más brillo.")
+            st.error("🔍 No se detectó un código QR claro. Toma la foto de más cerca y bien enfocada.")
 
+# =====================================================================
+# VISTA 3: REGISTRAR DOCENTE
+# =====================================================================
 elif opcion == "👨‍🏫 Registrar Docente":
     st.title("👨‍🏫 Registro de Docente")
     with st.form("form_doc", clear_on_submit=True):
@@ -93,10 +123,13 @@ elif opcion == "👨‍🏫 Registrar Docente":
         if st.form_submit_button("Registrar"):
             if cod and nom:
                 db_global["docentes"][cod] = {"nombre": nom, "curso": cur}
-                st.success("Docente registrado.")
+                st.success("Docente registrado con éxito.")
 
+# =====================================================================
+# VISTA 4: PANEL CREADOR
+# =====================================================================
 else:
     st.title("🔑 Panel Creador")
     if st.text_input("Contraseña:", type="password") == "admin123":
-        st.write("### Alumnos Registrados", db_global["alumnos"])
-        st.write("### Historial de Asistencias", db_global["asistencias"])
+        st.write("### Alumnos en el Sistema", db_global["alumnos"])
+        st.write("### Historial General de Asistencias", db_global["asistencias"])
